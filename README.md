@@ -142,13 +142,6 @@ tps/
   - Freehand Drawing
   - Smart Scissors (Intelligent Edge Detection)
   
-- **Auto-Segmentation**:
-  - Threshold-based Segmentation
-  - Region Growing Algorithm
-  - Active Contour Models (Snakes)
-  - Level Set Methods
-  - Atlas-based Segmentation
-  
 - **Editing Tools**:
   - Boolean Operations (Union, Intersection, Subtraction)
   - Morphological Operations (Erosion, Dilation, Opening, Closing)

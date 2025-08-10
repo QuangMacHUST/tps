@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 import pandas as pd
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, relationship
 
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO)
@@ -115,6 +115,23 @@ class Patient:
         return hashlib.md5(data_str.encode()).hexdigest()[:8].upper()
 
 
+class PatientStudyDB(Base):
+    """Model database cho patient studies"""
+    __tablename__ = 'patient_studies'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    study_uid = Column(String(256), nullable=False, index=True)
+    study_date = Column(DateTime, nullable=False)
+    study_description = Column(String(512), nullable=False)
+    modality = Column(String(32), nullable=False)
+    series_count = Column(Integer, default=0)
+    images_count = Column(Integer, default=0)
+    file_paths = Column(Text, nullable=True)  # JSON string của file paths
+    
+    # Foreign key to patient
+    patient_db_id = Column(Integer, ForeignKey('patients.id'), nullable=False)
+
+
 class PatientDB(Base):
     """Model database cho bệnh nhân"""
     __tablename__ = 'patients'
@@ -133,6 +150,13 @@ class PatientDB(Base):
     notes = Column(Text, nullable=True)
     tags = Column(Text, nullable=True)  # JSON string
     is_anonymized = Column(Boolean, default=False)
+    
+    # Relationship to studies
+    studies = relationship("PatientStudyDB", back_populates="patient")
+
+
+# Add back_populates
+PatientStudyDB.patient = relationship("PatientDB", back_populates="studies")
 
 
 class PatientManager:
@@ -179,7 +203,7 @@ class PatientManager:
     
     def create_patient(self, patient: Patient) -> bool:
         """
-        Tạo bệnh nhân mới
+        Tạo bệnh nhân mới với studies
         
         Args:
             patient: Thông tin bệnh nhân
@@ -195,7 +219,8 @@ class PatientManager:
                 ).first()
                 
                 if existing:
-                    raise ValueError(f"Patient ID {patient.patient_id} đã tồn tại")
+                    logger.warning(f"Patient ID {patient.patient_id} đã tồn tại")
+                    return False
                 
                 # Tạo record mới
                 db_patient = PatientDB(
@@ -215,13 +240,30 @@ class PatientManager:
                 )
                 
                 session.add(db_patient)
+                session.flush()  # Để có id cho foreign key
+                
+                # Thêm studies
+                import json
+                for study in patient.studies:
+                    db_study = PatientStudyDB(
+                        study_uid=study.study_uid,
+                        study_date=study.study_date,
+                        study_description=study.study_description,
+                        modality=study.modality,
+                        series_count=study.series_count,
+                        images_count=study.images_count,
+                        file_paths=json.dumps(study.file_paths) if study.file_paths else None,
+                        patient_db_id=db_patient.id
+                    )
+                    session.add(db_study)
+                
                 session.commit()
                 
                 # Tạo thư mục cho bệnh nhân
                 patient_dir = self.data_root / patient.patient_id
                 patient_dir.mkdir(exist_ok=True)
                 
-                logger.info(f"Đã tạo bệnh nhân mới: {patient.patient_id}")
+                logger.info(f"Đã tạo bệnh nhân mới: {patient.patient_id} với {len(patient.studies)} studies")
                 return True
                 
         except Exception as e:
@@ -263,6 +305,21 @@ class PatientManager:
                     tags=db_patient.tags.split(',') if db_patient.tags else []
                 )
                 
+                # Load studies từ database
+                import json
+                for db_study in db_patient.studies:
+                    file_paths = json.loads(db_study.file_paths) if db_study.file_paths else []
+                    study = PatientStudy(
+                        study_uid=db_study.study_uid,
+                        study_date=db_study.study_date,
+                        study_description=db_study.study_description,
+                        modality=db_study.modality,
+                        series_count=db_study.series_count,
+                        images_count=db_study.images_count,
+                        file_paths=file_paths
+                    )
+                    patient.add_study(study)
+                
                 return patient
                 
         except Exception as e:
@@ -270,6 +327,68 @@ class PatientManager:
             return None
     
     def update_patient(self, patient: Patient) -> bool:
+        """
+        Cập nhật thông tin bệnh nhân
+        
+        Args:
+            patient: Thông tin bệnh nhân đã cập nhật
+            
+        Returns:
+            bool: True nếu cập nhật thành công
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Tìm bệnh nhân trong database
+                db_patient = session.query(PatientDB).filter(
+                    PatientDB.patient_id == patient.patient_id
+                ).first()
+                
+                if not db_patient:
+                    logger.warning(f"Không tìm thấy patient {patient.patient_id} để cập nhật")
+                    return False
+                
+                # Cập nhật thông tin cơ bản
+                db_patient.patient_name = patient.patient_name
+                db_patient.birth_date = patient.birth_date
+                db_patient.sex = patient.sex
+                db_patient.diagnosis = patient.diagnosis
+                db_patient.physician = patient.physician
+                db_patient.department = patient.department
+                db_patient.modified_date = patient.modified_date
+                db_patient.status = patient.status.value
+                db_patient.notes = patient.notes
+                db_patient.tags = ','.join(patient.tags) if patient.tags else None
+                
+                # Xóa studies cũ
+                session.query(PatientStudyDB).filter(
+                    PatientStudyDB.patient_db_id == db_patient.id
+                ).delete()
+                
+                # Thêm studies mới
+                import json
+                for study in patient.studies:
+                    db_study = PatientStudyDB(
+                        study_uid=study.study_uid,
+                        study_date=study.study_date,
+                        study_description=study.study_description,
+                        modality=study.modality,
+                        series_count=study.series_count,
+                        images_count=study.images_count,
+                        file_paths=json.dumps(study.file_paths) if study.file_paths else None,
+                        patient_db_id=db_patient.id
+                    )
+                    session.add(db_study)
+                
+                session.commit()
+                
+                logger.info(f"Đã cập nhật bệnh nhân: {patient.patient_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật bệnh nhân {patient.patient_id}: {e}")
+            return False
+
+    def _legacy_update_patient(self, patient: Patient) -> bool:
         """
         Cập nhật thông tin bệnh nhân
         
@@ -400,7 +519,7 @@ class PatientManager:
                 # Thực hiện query
                 db_patients = query_obj.order_by(PatientDB.modified_date.desc()).all()
                 
-                # Convert sang Patient objects
+                # Convert sang Patient objects với studies
                 patients = []
                 for db_patient in db_patients:
                     patient = Patient(
@@ -417,6 +536,22 @@ class PatientManager:
                         notes=db_patient.notes or '',
                         tags=db_patient.tags.split(',') if db_patient.tags else []
                     )
+                    
+                    # Load studies từ database
+                    import json
+                    for db_study in db_patient.studies:
+                        file_paths = json.loads(db_study.file_paths) if db_study.file_paths else []
+                        study = PatientStudy(
+                            study_uid=db_study.study_uid,
+                            study_date=db_study.study_date,
+                            study_description=db_study.study_description,
+                            modality=db_study.modality,
+                            series_count=db_study.series_count,
+                            images_count=db_study.images_count,
+                            file_paths=file_paths
+                        )
+                        patient.add_study(study)
+                    
                     patients.append(patient)
                 
                 logger.info(f"Tìm được {len(patients)} bệnh nhân")

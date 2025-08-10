@@ -25,6 +25,7 @@ from PyQt5.QtGui import QFont, QIcon, QPixmap, QKeySequence
 
 from ..core.patient_manager import PatientManager
 from .patient_browser import PatientBrowser
+from .image_workspace import ImageWorkspace
 
 # Cấu hình logging
 logging.basicConfig(
@@ -104,6 +105,10 @@ class MainWindow(QMainWindow):
         
         # Initialize patient manager
         self.patient_manager = PatientManager()
+        
+        # Current workspaces
+        self.workspaces: Dict[str, Any] = {}
+        self.image_workspace: Optional[ImageWorkspace] = None
         
         # Setup UI
         self.setup_ui()
@@ -301,6 +306,15 @@ class MainWindow(QMainWindow):
         stats_action.triggered.connect(lambda: self.right_tabs.setCurrentIndex(1))
         view_menu.addAction(stats_action)
         
+        view_menu.addSeparator()
+        
+        # Open Image Workspace
+        image_workspace_action = QAction("&Image Workspace", self)
+        image_workspace_action.setShortcut("Ctrl+I")
+        image_workspace_action.setStatusTip("Mở Image Workspace để xem và phân tích hình ảnh")
+        image_workspace_action.triggered.connect(self.open_image_workspace)
+        view_menu.addAction(image_workspace_action)
+        
         # Tools Menu
         tools_menu = menubar.addMenu("&Tools")
         
@@ -447,13 +461,8 @@ class MainWindow(QMainWindow):
         self.update_patient_count()
     
     def on_patient_double_clicked(self, patient):
-        """Xử lý double click bệnh nhân"""
-        # TODO: Mở patient workspace/viewer
-        QMessageBox.information(
-            self,
-            "Patient Selected",
-            f"Opening workspace for:\n{patient.patient_name} ({patient.patient_id})\n\nTính năng đang phát triển..."
-        )
+        """Xử lý double click bệnh nhân - Mở Image Workspace"""
+        self.open_image_workspace(selected_patient=patient)
     
     def show_settings(self):
         """Hiển thị dialog settings"""
@@ -522,3 +531,45 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Lỗi khi thoát ứng dụng: {e}")
             event.accept()  # Force close nếu có lỗi
+    
+    def open_image_workspace(self, selected_patient=None):
+        """Mở Image Workspace"""
+        try:
+            if self.image_workspace is None:
+                # Tạo Image Workspace mới
+                self.image_workspace = ImageWorkspace(self.patient_manager)
+                
+                # Connect signals
+                self.image_workspace.workspace_closed.connect(self.on_image_workspace_closed)
+                
+                logger.info("Image Workspace created")
+            
+            # Show workspace
+            self.image_workspace.show()
+            self.image_workspace.raise_()
+            self.image_workspace.activateWindow()
+            
+            # Set selected patient nếu có
+            if selected_patient and self.image_workspace.series_navigator:
+                # Find patient trong combo box và select
+                combo = self.image_workspace.series_navigator.patient_combo
+                for i in range(combo.count()):
+                    patient_data = combo.itemData(i)
+                    if patient_data and patient_data.patient_id == selected_patient.patient_id:
+                        combo.setCurrentIndex(i)
+                        break
+            
+            logger.info("Image Workspace opened")
+            
+        except Exception as e:
+            logger.error(f"Error opening Image Workspace: {e}")
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Cannot open Image Workspace:\n{e}"
+            )
+    
+    def on_image_workspace_closed(self):
+        """Handle Image Workspace được đóng"""
+        self.image_workspace = None
+        logger.info("Image Workspace closed")

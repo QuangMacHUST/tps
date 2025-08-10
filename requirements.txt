@@ -9,6 +9,11 @@ pydicom>=2.3.0
 SimpleITK>=2.1.0
 nibabel>=3.2.0
 
+# 3D Visualization and Medical Imaging
+vtk>=9.2.0
+vtkplotlib>=1.5.0
+pyvista>=0.37.0
+
 # GUI framework
 PyQt5>=5.15.0
 # Alternative: PySide2>=5.15.0

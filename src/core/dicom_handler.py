@@ -83,8 +83,12 @@ class DICOMHandler:
     """
     
     SUPPORTED_MODALITIES = [
-        'CT', 'MRI', 'PET', 'RTIMAGE', 'RTSTRUCT', 'RTPLAN', 'RTDOSE'
+        'CT', 'MRI', 'PET', 'RTIMAGE', 'RTSTRUCT', 'RTPLAN', 'RTDOSE',
+        'CR', 'DX', 'MG', 'US', 'XA'  # Additional imaging modalities
     ]
+    
+    # RT DICOM specific modalities
+    RT_MODALITIES = ['RTIMAGE', 'RTSTRUCT', 'RTPLAN', 'RTDOSE']
     
     def __init__(self):
         """Khởi tạo DICOMHandler"""
